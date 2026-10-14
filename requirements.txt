@@ -1,0 +1,11 @@
+# Runtime
+openai>=2.0,<3          # OpenAI Python SDK (chat completions + moderations + structured outputs)
+pymongo>=4.8,<5         # MongoDB driver (audit logs, approvals, counters, policies)
+pydantic>=2.7,<3        # Validation of tool arguments, policy file, LLM classifier output
+python-dotenv>=1.0      # Loads .env into environment variables
+httpx>=0.27             # HTTP client for the fetch_url tool
+PyYAML>=6.0             # Reads policy.yaml
+
+# Tests (run fully offline: no OpenAI key, no MongoDB server needed)
+pytest>=8.0
+mongomock>=4.1
