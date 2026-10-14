@@ -1,0 +1,78 @@
+# ---------------------------------------------------------------------------
+# OpsPilot runtime policy.
+# This file is the human-editable source of truth. On startup it is validated
+# with Pydantic and stored (versioned) in MongoDB; the agent reads the ACTIVE
+# policy from MongoDB at the start of every turn, so you can change rules
+# without restarting:  python -m opsagent.approver policy-reload
+# ---------------------------------------------------------------------------
+version: 1
+
+input:
+  max_chars: 2000               # long prompts are a common way to smuggle injections
+  injection_threshold: 3        # heuristic score at/above which a user message is blocked
+  block_pii: [CREDIT_CARD, AADHAAR, SECRET]   # never forward these to a third-party LLM
+  blocked_topics:               # business rule: things this bot must not advise on
+    - name: legal_advice
+      patterns: ['\b(sue|lawsuit|legal advice|press charges)\b']
+    - name: medical_advice
+      patterns: ['\b(diagnose me|prescribe|dosage|what medication)\b']
+    - name: malware
+      patterns: ['\b(ransomware|keylogger|credential stealer|reverse shell)\b']
+
+output:
+  max_chars: 4000
+  mask_pii: [EMAIL, PHONE, CREDIT_CARD, AADHAAR, PAN, SECRET]
+  allowed_link_domains: [acme-shop.example, docs.python.org]   # other links are stripped
+
+tool_output:
+  max_chars: 4000
+  injection_threshold: 2        # stricter than input: documents rarely talk to "the assistant"
+  mask_pii: [CREDIT_CARD, AADHAAR, PAN, SECRET, PHONE]
+
+limits:
+  max_steps: 6                  # LLM <-> tool round trips per user message
+  max_tool_calls_per_turn: 8
+  max_identical_tool_calls: 2   # same tool + same args more than this = loop
+  requests_per_minute: 10       # per user
+  daily_token_budget: 60000     # per user, counted from OpenAI usage
+
+# Role-based tool allowlist (least privilege). A tool not listed for a role
+# does not exist for that role.
+roles:
+  viewer:  [search_kb, read_file]
+  support: [search_kb, read_file, get_order, issue_refund, send_email, fetch_url]
+  admin:   [search_kb, read_file, get_order, issue_refund, send_email, fetch_url, sql_select]
+
+# Per-tool rules. Rules are checked top to bottom; first match wins.
+# Supported ops: lt, le, gt, ge, eq, ne, in, not_in, contains
+tools:
+  search_kb:
+    default: allow
+  read_file:
+    default: allow
+    config:
+      allowed_extensions: [.md, .txt, .log]
+      max_bytes: 65536
+  get_order:
+    default: allow
+  sql_select:
+    default: allow
+    config:
+      allowed_tables: [orders, products]
+      max_rows: 50
+  fetch_url:
+    default: allow
+    config:
+      allowed_domains: [docs.python.org, example.com]
+      max_bytes: 100000
+  issue_refund:
+    default: require_approval
+    escalate_when_tainted: true
+    rules:
+      - {field: amount, op: gt, value: 500, then: deny,  reason: "Refunds above 500 are never done by the agent"}
+      - {field: amount, op: le, value: 50,  then: allow, reason: "Small refunds are auto-approved"}
+  send_email:
+    default: require_approval
+    escalate_when_tainted: true
+    config:
+      allowed_recipient_domains: [acme-shop.example]
